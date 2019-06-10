@@ -1,12 +1,12 @@
 [package]
 authors = ["Nick Fitzgerald <fitzgen@gmail.com>"]
 categories = ["memory-management", "no-std", "rust-patterns", "data-structures"]
-description = "A safe arena allocator that supports deletion without suffering from the ABA problem by using generational indices."
+description = "A safe arena allocator that supports deletion without suffering from the ABA problem by using generational indices. Now with typed indices!"
 keywords = ["generation", "index", "arena", "ecs"]
 license = "MPL-2.0"
-name = "generational-arena"
+name = "typed-generational-arena"
 readme = "./README.md"
-repository = "https://github.com/fitzgen/generational-arena"
+repository = "https://gitlab.com/tekne/typed-generational-arena"
 version = "0.2.2"
 
 [badges]

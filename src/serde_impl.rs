@@ -6,7 +6,7 @@ use core::marker::PhantomData;
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
 
-impl Serialize for Index {
+impl<T> Serialize for Index<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -17,13 +17,13 @@ impl Serialize for Index {
     }
 }
 
-impl<'de> Deserialize<'de> for Index {
+impl<'de, T> Deserialize<'de> for Index<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         let (index, generation) = Deserialize::deserialize(deserializer)?;
-        Ok(Index { index, generation })
+        Ok(Index<T> { index, generation })
     }
 }
 

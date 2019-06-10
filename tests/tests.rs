@@ -1,5 +1,5 @@
-extern crate generational_arena;
-use generational_arena::Arena;
+extern crate typed_generational_arena;
+use typed_generational_arena::Arena;
 use std::collections::BTreeSet;
 
 #[test]
