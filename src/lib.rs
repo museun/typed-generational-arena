@@ -1,12 +1,11 @@
 /*!
-[![](https://docs.rs/generational-arena/badge.svg)](https://docs.rs/generational-arena/)
-[![](https://img.shields.io/crates/v/generational-arena.svg)](https://crates.io/crates/generational-arena)
-[![](https://img.shields.io/crates/d/generational-arena.svg)](https://crates.io/crates/generational-arena)
-[![Travis CI Build Status](https://travis-ci.org/fitzgen/generational-arena.svg?branch=master)](https://travis-ci.org/fitzgen/generational-arena)
+[![](https://docs.rs/typed-generational-arena/badge.svg)](https://docs.rs/typed-typed-generational-arena/)
+[![](https://img.shields.io/crates/v/typed-typed-generational-arena.svg)](https://crates.io/crates/typed-typed-generational-arena)
+[![](https://img.shields.io/crates/d/typed-typed-generational-arena.svg)](https://crates.io/crates/typed-typed-generational-arena)
 
 A safe arena allocator that allows deletion without suffering from [the ABA
-problem](https://en.wikipedia.org/wiki/ABA_problem) by using generational
-indices.
+problem](https://en.wikipedia.org/wiki/ABA_problem) by using generational type-safe
+indices. Forked from [typed-generational-arena](https://github.com/fitzgen/typed-generational-arena/).
 
 Inspired by [Catherine West's closing keynote at RustConf
 2018](http://rustconf.com/program.html#closingkeynote), where these ideas
@@ -70,11 +69,11 @@ then the operation fails.
 
 ## Usage
 
-First, add `generational-arena` to your `Cargo.toml`:
+First, add `typed-generational-arena` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-generational-arena = "0.1"
+typed-generational-arena = "0.1"
 ```
 
 Then, import the crate and use the
@@ -128,7 +127,7 @@ currently requires nightly Rust and `feature(alloc)` to get access to `Vec`.
 
 ```toml
 [dependencies]
-generational-arena = { version = "0.2", default-features = false }
+typed-generational-arena = { version = "0.1", default-features = false }
 ```
 
 ### Serialization and Deserialization with [`serde`](https://crates.io/crates/serde)
@@ -137,7 +136,7 @@ To enable serialization/deserialization support, enable the "serde" feature.
 
 ```toml
 [dependencies]
-generational-arena = { version = "0.2", features = ["serde"] }
+typed-generational-arena = { version = "0.1", features = ["serde"] }
 ```
  */
 
