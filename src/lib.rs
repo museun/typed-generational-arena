@@ -5,7 +5,7 @@
 
 A safe arena allocator that allows deletion without suffering from [the ABA
 problem](https://en.wikipedia.org/wiki/ABA_problem) by using generational type-safe
-indices. Forked from [typed-generational-arena](https://github.com/fitzgen/typed-generational-arena/).
+indices. Forked from [generational-arena](https://github.com/fitzgen/generational-arena/).
 
 Inspired by [Catherine West's closing keynote at RustConf
 2018](http://rustconf.com/program.html#closingkeynote), where these ideas
