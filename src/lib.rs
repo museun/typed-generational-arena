@@ -1,7 +1,7 @@
 /*!
-[![](https://docs.rs/typed-generational-arena/badge.svg)](https://docs.rs/typed-typed-generational-arena/)
-[![](https://img.shields.io/crates/v/typed-typed-generational-arena.svg)](https://crates.io/crates/typed-typed-generational-arena)
-[![](https://img.shields.io/crates/d/typed-typed-generational-arena.svg)](https://crates.io/crates/typed-typed-generational-arena)
+[![](https://docs.rs/typed-generational-arena/badge.svg)](https://docs.rs/typed-generational-arena/)
+[![](https://img.shields.io/crates/v/typed-generational-arena.svg)](https://crates.io/crates/typed-generational-arena)
+[![](https://img.shields.io/crates/d/typed-generational-arena.svg)](https://crates.io/crates/typed-generational-arena)
 
 A safe arena allocator that allows deletion without suffering from [the ABA
 problem](https://en.wikipedia.org/wiki/ABA_problem) by using generational type-safe
