@@ -1,9 +1,9 @@
 #[macro_use]
 extern crate criterion;
-extern crate generational_arena;
+extern crate typed_generational_arena;
 
 use criterion::{Criterion, ParameterizedBenchmark, Throughput};
-use generational_arena::{Arena, Index};
+use typed_generational_arena::{Arena, Index};
 
 #[derive(Default)]
 struct Small(usize);
@@ -19,7 +19,7 @@ fn insert<T: Default>(n: usize) {
     }
 }
 
-fn lookup<T>(arena: &Arena<T>, idx: Index, n: usize) {
+fn lookup<T>(arena: &Arena<T>, idx: Index<T>, n: usize) {
     for _ in 0..n {
         criterion::black_box(&arena[idx]);
     }
