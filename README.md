@@ -74,7 +74,7 @@ First, add `typed-generational-arena` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-typed-generational-arena = "0.1"
+typed-generational-arena = "0.2"
 ```
 
 Then, import the crate and use one of the variations of the
@@ -131,7 +131,7 @@ currently requires nightly Rust and `feature(alloc)` to get access to `Vec`.
 
 ```toml
 [dependencies]
-typed-generational-arena = { version = "0.1", default-features = false }
+typed-generational-arena = { version = "0.2", default-features = false }
 ```
 
 #### Serialization and Deserialization with [`serde`](https://crates.io/crates/serde)
@@ -140,5 +140,5 @@ To enable serialization/deserialization support, enable the "serde" feature.
 
 ```toml
 [dependencies]
-typed-generational-arena = { version = "0.1", features = ["serde"] }
+typed-generational-arena = { version = "0.2", features = ["serde"] }
 ```
