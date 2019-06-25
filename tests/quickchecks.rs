@@ -2,7 +2,7 @@ extern crate typed_generational_arena;
 #[macro_use]
 extern crate quickcheck;
 
-use typed_generational_arena::Arena;
+use typed_generational_arena::StandardArena as Arena;
 use std::collections::BTreeSet;
 use std::iter::FromIterator;
 

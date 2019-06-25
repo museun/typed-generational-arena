@@ -82,9 +82,9 @@ Then, import the crate and use the
 
 ```rust
 extern crate typed_generational_arena;
-use typed_generational_arena::Arena;
+use typed_generational_arena::StandardArena;
 
-let mut arena = Arena::new();
+let mut arena = StandardArena::new();
 
 // Insert some elements into the arena.
 let rza = arena.insert("Robert Fitzgerald Diggs");

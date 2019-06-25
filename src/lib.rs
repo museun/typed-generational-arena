@@ -76,14 +76,17 @@ First, add `typed-generational-arena` to your `Cargo.toml`:
 typed-generational-arena = "0.1"
 ```
 
-Then, import the crate and use the
+Then, import the crate and use one of the variations of the
 [`typed_generational_arena::Arena`](./struct.Arena.html) type!
+In these examples, we use `typed_generational_arena::StandardArena`,
+but you can use any combination of index and generation ID
+best fits your purposes.
 
 ```rust
 extern crate typed_generational_arena;
-use typed_generational_arena::Arena;
+use typed_generational_arena::StandardArena;
 
-let mut arena = Arena::new();
+let mut arena = StandardArena::new();
 
 // Insert some elements into the arena.
 let rza = arena.insert("Robert Fitzgerald Diggs");
@@ -145,6 +148,7 @@ typed-generational-arena = { version = "0.1", features = ["serde"] }
 #![cfg_attr(not(feature = "std"), feature(alloc))]
 
 extern crate num_traits;
+extern crate derivative;
 #[macro_use]
 extern crate cfg_if;
 #[cfg(feature = "serde")]
@@ -160,7 +164,7 @@ cfg_if! {
     }
 }
 
-use core::cmp;
+use core::cmp::{self, Ordering};
 use core::iter::{self, Extend, FromIterator, FusedIterator};
 use core::mem;
 use core::ops::{self, AddAssign};
@@ -168,6 +172,7 @@ use core::slice;
 use core::default::Default;
 
 use num_traits::{ToPrimitive, FromPrimitive};
+use derivative::Derivative;
 
 #[cfg(feature = "serde")]
 mod serde_impl;
@@ -175,16 +180,22 @@ mod serde_impl;
 use serde::{Serialize, Deserialize};
 
 /// A type which can be used as the index of a generation.
-pub trait GenerationalIndex : Eq {
+pub trait GenerationalIndex : Copy + Eq {
     /// Get an object representing the first possible generation
     fn first_generation() -> Self;
     /// Increment the generation of this object. May wrap or panic on overflow depending on type.
     fn increment_generation(&mut self);
+    /// Compare this generation with another.
+    fn generation_lt(&self, other : &Self) -> bool;
 }
 
-impl<T: Eq + FromPrimitive + AddAssign + Default> GenerationalIndex for T {
+impl<T: Eq + FromPrimitive + AddAssign + Default + PartialOrd + Copy> GenerationalIndex for T {
+    #[inline(always)]
     fn first_generation() -> Self { Default::default() }
+    #[inline(always)]
     fn increment_generation(&mut self) { *self += Self::from_u8(1).unwrap() }
+    #[inline(always)]
+    fn generation_lt(&self, other : &Self) -> bool { self.lt(other) }
 }
 
 /// If this is used as a generational index, then the arena ignores generation
@@ -195,43 +206,43 @@ pub struct IgnoreGeneration;
 impl GenerationalIndex for IgnoreGeneration {
     fn first_generation() -> Self { IgnoreGeneration }
     fn increment_generation(&mut self) {}
+    fn generation_lt(&self, _other : &Self) -> bool { false }
 }
 
 /// A type which can be used as an index to an arena
-pub trait ArenaIndex: ToPrimitive + FromPrimitive {}
-impl<T: ToPrimitive + FromPrimitive> ArenaIndex for T {}
+pub trait ArenaIndex: Copy {
+    /// Create an arena index from a usize
+    fn from_idx(idx : usize) -> Self;
+    /// Transform an arena index into a usize
+    fn to_idx(self) -> usize;
+}
+impl<T: ToPrimitive + FromPrimitive + Copy> ArenaIndex for T {
+    #[inline(always)]
+    fn from_idx(idx: usize) -> Self { Self::from_usize(idx).unwrap() }
+    #[inline(always)]
+    fn to_idx(self) -> usize { self.to_usize().unwrap() }
+}
 
 /// The `Arena` allows inserting and removing elements that are referred to by
 /// `Index`.
 ///
 /// [See the module-level documentation for example usage and motivation.](./index.html)
 #[derive(Clone, Debug)]
-pub struct Arena<T> {
+pub struct Arena<T, I : ArenaIndex = usize, G: GenerationalIndex = usize> {
     // It is a breaking change to modify these three members, as they are needed for serialization
-    items: Vec<Entry<T>>,
-    generation: u64,
+    items: Vec<Entry<T, I, G>>,
+    generation: G,
     len: usize,
-    free_list_head: Option<usize>,
+    free_list_head: Option<I>,
 }
+
+/// A standard `Arena` of `T` indexed by `usize`, with `u64` generations
+pub type StandardArena<T> = Arena<T, usize, u64>;
 
 #[derive(Clone, Debug)]
-enum Entry<T> {
-    Free { next_free: Option<usize> },
-    Occupied { generation: u64, value: T },
-}
-
-impl<T> Default for Entry<T> {
-    fn default() -> Entry<T> {
-        Entry::Free { next_free : None }
-    }
-}
-
-mod delegate_untyped_index {
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct Index {
-        pub index : usize,
-        pub generation : u64
-    }
+enum Entry<T, I : ArenaIndex = usize, G: GenerationalIndex = u64> {
+    Free { next_free: Option<I> },
+    Occupied { generation: G, value: T },
 }
 
 /// An index (and generation) into an `Arena`.
@@ -242,99 +253,82 @@ mod delegate_untyped_index {
 /// # Examples
 ///
 /// ```
-/// use typed_generational_arena::Arena;
+/// use typed_generational_arena::StandardArena;
 ///
-/// let mut arena = Arena::new();
+/// let mut arena = StandardArena::new();
 /// let idx = arena.insert(123);
 /// assert_eq!(arena[idx], 123);
 /// ```
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Index<T> {
-    index: usize,
-    generation: u64,
+#[derive(Derivative)]
+#[derivative(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct Index<T, I: ArenaIndex = usize, G: GenerationalIndex = u64> {
+
+    index: I,
+    generation: G,
     #[cfg_attr(feature = "serde", serde(skip))]
+    #[derivative(Debug(bound=""))]
+    #[derivative(Debug="ignore")]
+    #[derivative(Clone(bound=""))]
+    #[derivative(Eq(bound=""))]
+    #[derivative(PartialEq(bound=""))]
+    #[derivative(Hash(bound=""))]
     _phantom: core::marker::PhantomData<fn() -> T>
 }
-impl<T> Index<T> {
+
+impl<T, I: ArenaIndex + Copy, G: GenerationalIndex + Copy> Copy for Index<T, I, G> {}
+
+impl<T, I: ArenaIndex, G: GenerationalIndex> Index<T, I, G> {
     #[inline]
-    pub(self) fn new(index : usize, generation : u64) -> Index<T> {
+    pub(self) fn new(index : I, generation : G) -> Index<T, I, G> {
         Index{ index : index, generation : generation, _phantom : std::marker::PhantomData }
     }
-    #[inline]
-    pub(self) fn as_untyped(&self) -> delegate_untyped_index::Index {
-        delegate_untyped_index::Index{ index : self.index, generation : self.generation }
-    }
-}
-impl<T> Clone for Index<T> {
-    #[inline]
-    fn clone(&self) -> Index<T> { Index::new(self.index, self.generation) }
-}
-impl<T> Copy for Index<T> {}
-
-impl<T> PartialEq for Index<T> {
-    #[inline]
-    fn eq(&self, other : &Self) -> bool {
-        self.as_untyped().eq(&other.as_untyped())
-    }
 }
 
-impl<T> Eq for Index<T> {}
-impl<T> PartialOrd for Index<T> {
-    #[inline]
-    fn partial_cmp(&self, other : &Self) -> Option<core::cmp::Ordering> {
-        self.as_untyped().partial_cmp(&other.as_untyped())
-    }
-    #[inline]
-    fn lt(&self, other : &Self) -> bool {
-        self.as_untyped().lt(&other.as_untyped())
-    }
-    #[inline]
-    fn le(&self, other : &Self) -> bool {
-        self.as_untyped().le(&other.as_untyped())
-    }
-    #[inline]
-    fn gt(&self, other : &Self) -> bool {
-        self.as_untyped().gt(&other.as_untyped())
-    }
-    #[inline]
-    fn ge(&self, other : &Self) -> bool {
-        self.as_untyped().ge(&other.as_untyped())
+
+impl<T, I: ArenaIndex + PartialOrd, G: GenerationalIndex> PartialOrd
+for Index<T, I, G> {
+    fn partial_cmp(&self, other : &Self) -> Option<Ordering> {
+        match self.index.partial_cmp(&other.index) {
+            Some(ordering) => if ordering == Ordering::Equal {
+                if self.generation.generation_lt(&other.generation) {
+                    Some(Ordering::Less)
+                } else if self.generation == other.generation {
+                    Some(Ordering::Equal)
+                } else {
+                    Some(Ordering::Greater)
+                }
+            } else { Some(ordering) },
+            None => if self.generation.generation_lt(&other.generation) {
+                Some(Ordering::Less)
+            } else if self.generation == other.generation {
+                None
+            } else {
+                Some(Ordering::Greater)
+            }
+        }
     }
 }
 
-impl<T> Ord for Index<T> {
-    fn cmp(&self, other : &Self) -> core::cmp::Ordering {
-        self.as_untyped().cmp(&other.as_untyped())
-    }
+impl<T, I: ArenaIndex + Ord, G: GenerationalIndex> Ord for Index<T, I, G> {
+    fn cmp(&self, other : &Self) -> Ordering { self.partial_cmp(other).unwrap() }
 }
 
-impl<T> core::hash::Hash for Index<T> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state : &mut H) {
-        self.as_untyped().hash(state)
-    }
-}
-impl<T> core::fmt::Debug for Index<T> {
-    #[inline]
-    fn fmt(&self, f : &mut core::fmt::Formatter) -> core::fmt::Result {
-        self.as_untyped().fmt(f)
-    }
-}
 
 const DEFAULT_CAPACITY: usize = 4;
 
-impl<T> Arena<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
     /// Constructs a new, empty `Arena`.
     ///
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::<usize>::new();
+    /// let mut arena = StandardArena::<usize>::new();
     /// # let _ = arena;
     /// ```
-    pub fn new() -> Arena<T> {
+    pub fn new() -> Arena<T, I, G> {
         Arena::with_capacity(DEFAULT_CAPACITY)
     }
 
@@ -345,9 +339,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::with_capacity(10);
+    /// let mut arena = StandardArena::with_capacity(10);
     ///
     /// // These insertions will not require further allocation.
     /// for i in 0..10 {
@@ -357,11 +351,11 @@ impl<T> Arena<T> {
     /// // But now we are at capacity, and there is no more room.
     /// assert!(arena.try_insert(99).is_err());
     /// ```
-    pub fn with_capacity(n: usize) -> Arena<T> {
+    pub fn with_capacity(n: usize) -> Arena<T, I, G> {
         let n = cmp::max(n, 1);
         let mut arena = Arena {
             items: Vec::new(),
-            generation: 0,
+            generation: G::first_generation(),
             free_list_head: None,
             len: 0,
         };
@@ -374,9 +368,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::with_capacity(1);
+    /// let mut arena = StandardArena::with_capacity(1);
     /// arena.insert(42);
     /// arena.insert(43);
     ///
@@ -393,11 +387,11 @@ impl<T> Arena<T> {
                 Entry::Free { next_free: None }
             } else {
                 Entry::Free {
-                    next_free: Some(i + 1),
+                    next_free: Some(I::from_idx(i + 1)),
                 }
             }
         }));
-        self.free_list_head = Some(0);
+        self.free_list_head = Some(I::from_idx(0));
         self.len = 0;
     }
 
@@ -412,9 +406,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     ///
     /// match arena.try_insert(42) {
     ///     Ok(idx) => {
@@ -428,19 +422,22 @@ impl<T> Arena<T> {
     /// };
     /// ```
     #[inline]
-    pub fn try_insert(&mut self, value: T) -> Result<Index<T>, T> {
+    pub fn try_insert(&mut self, value: T) -> Result<Index<T, I, G>, T> {
         match self.free_list_head {
             None => Err(value),
-            Some(i) => match self.items[i] {
-                Entry::Occupied { .. } => panic!("corrupt free list"),
-                Entry::Free { next_free } => {
-                    self.free_list_head = next_free;
-                    self.len += 1;
-                    self.items[i] = Entry::Occupied {
-                        generation: self.generation,
-                        value,
-                    };
-                    Ok(Index::new(i, self.generation))
+            Some(i) => {
+                let idx = i.to_idx();
+                match &self.items[idx] {
+                    Entry::Occupied { .. } => panic!("corrupt free list"),
+                    Entry::Free { next_free } => {
+                        self.free_list_head = *next_free;
+                        self.len += 1;
+                        self.items[idx] = Entry::Occupied {
+                            generation: self.generation,
+                            value,
+                        };
+                        Ok(Index::new(i, self.generation))
+                    }
                 }
             },
         }
@@ -453,15 +450,15 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     ///
     /// let idx = arena.insert(42);
     /// assert_eq!(arena[idx], 42);
     /// ```
     #[inline]
-    pub fn insert(&mut self, value: T) -> Index<T> {
+    pub fn insert(&mut self, value: T) -> Index<T, I, G> {
         match self.try_insert(value) {
             Ok(i) => i,
             Err(value) => self.insert_slow_path(value),
@@ -469,7 +466,7 @@ impl<T> Arena<T> {
     }
 
     #[inline(never)]
-    fn insert_slow_path(&mut self, value: T) -> Index<T> {
+    fn insert_slow_path(&mut self, value: T) -> Index<T, I, G> {
         let len = self.items.len();
         self.reserve(len);
         self.try_insert(value)
@@ -485,21 +482,21 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx = arena.insert(42);
     ///
     /// assert_eq!(arena.remove(idx), Some(42));
     /// assert_eq!(arena.remove(idx), None);
     /// ```
-    pub fn remove(&mut self, i: Index<T>) -> Option<T> {
-        if i.index >= self.items.len() {
+    pub fn remove(&mut self, i: Index<T, I, G>) -> Option<T> {
+        if i.index.to_idx() >= self.items.len() {
             return None;
         }
 
         let entry = mem::replace(
-            &mut self.items[i.index],
+            &mut self.items[i.index.to_idx()],
             Entry::Free {
                 next_free: self.free_list_head,
             },
@@ -507,17 +504,17 @@ impl<T> Arena<T> {
         match entry {
             Entry::Occupied { generation, value } => {
                 if generation == i.generation {
-                    self.generation += 1;
+                    self.generation.increment_generation();
                     self.free_list_head = Some(i.index);
                     self.len -= 1;
                     Some(value)
                 } else {
-                    self.items[i.index] = Entry::Occupied { generation, value };
+                    self.items[i.index.to_idx()] = Entry::Occupied { generation, value };
                     None
                 }
             }
             e @ Entry::Free { .. } => {
-                self.items[i.index] = e;
+                self.items[i.index.to_idx()] = e;
                 None
             }
         }
@@ -530,9 +527,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut crew = Arena::new();
+    /// let mut crew = StandardArena::new();
     /// crew.extend(&["Jim Hawkins", "John Silver", "Alexander Smollett", "Israel Hands"]);
     /// let pirates = ["John Silver", "Israel Hands"]; // too dangerous to keep them around
     /// crew.retain(|_index, member| !pirates.contains(member));
@@ -541,11 +538,11 @@ impl<T> Arena<T> {
     /// assert_eq!(crew_members.next(), Some("Alexander Smollett"));
     /// assert!(crew_members.next().is_none());
     /// ```
-    pub fn retain(&mut self, mut predicate: impl FnMut(Index<T>, &T) -> bool) {
+    pub fn retain(&mut self, mut predicate: impl FnMut(Index<T, I, G>, &T) -> bool) {
         for i in 0..self.len {
             let remove = match &self.items[i] {
                 Entry::Occupied { generation, value } => {
-                    let index = Index::new(i, *generation);
+                    let index = Index::new(I::from_idx(i), *generation);
                     if predicate(index, value) {
                         None
                     } else {
@@ -568,16 +565,16 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx = arena.insert(42);
     ///
     /// assert!(arena.contains(idx));
     /// arena.remove(idx);
     /// assert!(!arena.contains(idx));
     /// ```
-    pub fn contains(&self, i: Index<T>) -> bool {
+    pub fn contains(&self, i: Index<T, I, G>) -> bool {
         self.get(i).is_some()
     }
 
@@ -589,17 +586,17 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx = arena.insert(42);
     ///
     /// assert_eq!(arena.get(idx), Some(&42));
     /// arena.remove(idx);
     /// assert!(arena.get(idx).is_none());
     /// ```
-    pub fn get(&self, i: Index<T>) -> Option<&T> {
-        match self.items.get(i.index) {
+    pub fn get(&self, i: Index<T, I, G>) -> Option<&T> {
+        match self.items.get(i.index.to_idx()) {
             Some(Entry::Occupied {
                 generation,
                 ref value,
@@ -616,17 +613,17 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx = arena.insert(42);
     ///
     /// *arena.get_mut(idx).unwrap() += 1;
     /// assert_eq!(arena.remove(idx), Some(43));
     /// assert!(arena.get_mut(idx).is_none());
     /// ```
-    pub fn get_mut(&mut self, i: Index<T>) -> Option<&mut T> {
-        match self.items.get_mut(i.index) {
+    pub fn get_mut(&mut self, i: Index<T, I, G>) -> Option<&mut T> {
+        match self.items.get_mut(i.index.to_idx()) {
             Some(Entry::Occupied {
                 generation,
                 ref mut value,
@@ -648,9 +645,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx1 = arena.insert(0);
     /// let idx2 = arena.insert(1);
     ///
@@ -664,30 +661,33 @@ impl<T> Arena<T> {
     /// assert_eq!(arena[idx1], 3);
     /// assert_eq!(arena[idx2], 4);
     /// ```
-    pub fn get2_mut(&mut self, i1: Index<T>, i2: Index<T>) -> (Option<&mut T>, Option<&mut T>) {
+    pub fn get2_mut(&mut self, i1: Index<T, I, G>, i2: Index<T, I, G>)
+    -> (Option<&mut T>, Option<&mut T>) {
         let len = self.items.len();
+        let idx = (i1.index.to_idx(), i2.index.to_idx());
+        let gen = (i1.generation, i2.generation);
 
-        if i1.index == i2.index {
-            assert!(i1.generation != i2.generation);
+        if idx.0 == idx.1 {
+            assert!(gen.0 != gen.1);
 
-            if i1.generation > i2.generation {
+            if gen.1.generation_lt(&gen.0) {
                 return (self.get_mut(i1), None);
             }
             return (None, self.get_mut(i2));
         }
 
-        if i1.index >= len {
+        if idx.0 >= len {
             return (None, self.get_mut(i2));
-        } else if i2.index >= len {
+        } else if idx.1 >= len {
             return (self.get_mut(i1), None);
         }
 
         let (raw_item1, raw_item2) = {
-            let (xs, ys) = self.items.split_at_mut(cmp::max(i1.index, i2.index));
-            if i1.index < i2.index {
-                (&mut xs[i1.index], &mut ys[0])
+            let (xs, ys) = self.items.split_at_mut(cmp::max(idx.0, idx.1));
+            if idx.0 < idx.1 {
+                (&mut xs[idx.0], &mut ys[0])
             } else {
-                (&mut ys[0], &mut xs[i2.index])
+                (&mut ys[0], &mut xs[idx.1])
             }
         };
 
@@ -695,7 +695,7 @@ impl<T> Arena<T> {
             Entry::Occupied {
                 generation,
                 ref mut value,
-            } if *generation == i1.generation => Some(value),
+            } if *generation == gen.0 => Some(value),
             _ => None,
         };
 
@@ -703,7 +703,7 @@ impl<T> Arena<T> {
             Entry::Occupied {
                 generation,
                 ref mut value,
-            } if *generation == i2.generation => Some(value),
+            } if *generation == gen.1 => Some(value),
             _ => None,
         };
 
@@ -717,9 +717,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// assert_eq!(arena.len(), 0);
     ///
     /// let idx = arena.insert(42);
@@ -740,9 +740,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// assert!(arena.is_empty());
     ///
     /// let idx = arena.insert(42);
@@ -764,9 +764,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::with_capacity(10);
+    /// let mut arena = StandardArena::with_capacity(10);
     /// assert_eq!(arena.capacity(), 10);
     ///
     /// // `try_insert` does not allocate new capacity.
@@ -792,9 +792,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::with_capacity(10);
+    /// let mut arena = StandardArena::with_capacity(10);
     /// arena.reserve(5);
     /// assert_eq!(arena.capacity(), 15);
     /// # let _: Arena<usize> = arena;
@@ -811,11 +811,11 @@ impl<T> Arena<T> {
                 }
             } else {
                 Entry::Free {
-                    next_free: Some(i + 1),
+                    next_free: Some(I::from_idx(i + 1)),
                 }
             }
         }));
-        self.free_list_head = Some(start);
+        self.free_list_head = Some(I::from_idx(start));
     }
 
     /// Iterate over shared references to the elements in this arena.
@@ -827,9 +827,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// for i in 0..10 {
     ///     arena.insert(i * i);
     /// }
@@ -838,7 +838,7 @@ impl<T> Arena<T> {
     ///     println!("{} is at index {:?}", value, idx);
     /// }
     /// ```
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<T, I, G> {
         Iter {
             len: self.len,
             inner: self.items.iter().enumerate(),
@@ -854,9 +854,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// for i in 0..10 {
     ///     arena.insert(i * i);
     /// }
@@ -865,10 +865,10 @@ impl<T> Arena<T> {
     ///     *value += 5;
     /// }
     /// ```
-    pub fn iter_mut(&mut self) -> IterMut<T> {
+    pub fn iter_mut(&mut self) -> IterMut<T, I, G> {
         IterMut {
             len: self.len,
-            inner: self.items.iter_mut().enumerate(),
+            inner: self.items.iter_mut().enumerate()
         }
     }
 
@@ -883,9 +883,9 @@ impl<T> Arena<T> {
     /// # Examples
     ///
     /// ```
-    /// use typed_generational_arena::Arena;
+    /// use typed_generational_arena::StandardArena;
     ///
-    /// let mut arena = Arena::new();
+    /// let mut arena = StandardArena::new();
     /// let idx_1 = arena.insert("hello");
     /// let idx_2 = arena.insert("world");
     ///
@@ -897,16 +897,16 @@ impl<T> Arena<T> {
     /// assert!(arena.get(idx_1).is_none());
     /// assert!(arena.get(idx_2).is_none());
     /// ```
-    pub fn drain(&mut self) -> Drain<T> {
+    pub fn drain(&mut self) -> Drain<T, I, G> {
         Drain {
             inner: self.items.drain(..).enumerate(),
         }
     }
 }
 
-impl<T> IntoIterator for Arena<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for Arena<T, I, G> {
     type Item = T;
-    type IntoIter = IntoIter<T>;
+    type IntoIter = IntoIter<T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
             len: self.len,
@@ -924,9 +924,9 @@ impl<T> IntoIterator for Arena<T> {
 /// # Examples
 ///
 /// ```
-/// use typed_generational_arena::Arena;
+/// use typed_generational_arena::StandardArena;
 ///
-/// let mut arena = Arena::new();
+/// let mut arena = StandardArena::new();
 /// for i in 0..10 {
 ///     arena.insert(i * i);
 /// }
@@ -936,12 +936,12 @@ impl<T> IntoIterator for Arena<T> {
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct IntoIter<T> {
+pub struct IntoIter<T, I: ArenaIndex, G: GenerationalIndex> {
     len: usize,
-    inner: vec::IntoIter<Entry<T>>,
+    inner: vec::IntoIter<Entry<T, I, G>>,
 }
 
-impl<T> Iterator for IntoIter<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> Iterator for IntoIter<T, I, G> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -965,7 +965,7 @@ impl<T> Iterator for IntoIter<T> {
     }
 }
 
-impl<T> DoubleEndedIterator for IntoIter<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> DoubleEndedIterator for IntoIter<T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.next_back() {
@@ -983,17 +983,17 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
     }
 }
 
-impl<T> ExactSizeIterator for IntoIter<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> ExactSizeIterator for IntoIter<T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<T> FusedIterator for IntoIter<T> {}
+impl<T, I: ArenaIndex, G: GenerationalIndex> FusedIterator for IntoIter<T, I, G> {}
 
-impl<'a, T> IntoIterator for &'a Arena<T> {
-    type Item = (Index<T>, &'a T);
-    type IntoIter = Iter<'a, T>;
+impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a Arena<T, I, G> {
+    type Item = (Index<T, I, G>, &'a T);
+    type IntoIter = Iter<'a, T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -1008,9 +1008,9 @@ impl<'a, T> IntoIterator for &'a Arena<T> {
 /// # Examples
 ///
 /// ```
-/// use typed_generational_arena::Arena;
+/// use typed_generational_arena::StandardArena;
 ///
-/// let mut arena = Arena::new();
+/// let mut arena = StandardArena::new();
 /// for i in 0..10 {
 ///     arena.insert(i * i);
 /// }
@@ -1020,13 +1020,13 @@ impl<'a, T> IntoIterator for &'a Arena<T> {
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct Iter<'a, T: 'a> {
+pub struct Iter<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> {
     len: usize,
-    inner: iter::Enumerate<slice::Iter<'a, Entry<T>>>,
+    inner: iter::Enumerate<slice::Iter<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = (Index<T>, &'a T);
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> Iterator for Iter<'a, T, I, G> {
+    type Item = (Index<T, I, G>, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -1040,7 +1040,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index::new(index, generation);
+                    let idx = Index::new(I::from_idx(index), generation);
                     return Some((idx, value));
                 }
                 None => {
@@ -1056,7 +1056,8 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> DoubleEndedIterator
+for Iter<'a, T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.next_back() {
@@ -1069,7 +1070,7 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index::new(index, generation);
+                    let idx = Index::new(I::from_idx(index), generation);
                     return Some((idx, value));
                 }
                 None => {
@@ -1081,17 +1082,17 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for Iter<'a, T> {
+impl<'a, T, I: ArenaIndex, G: GenerationalIndex> ExactSizeIterator for Iter<'a, T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a, T> FusedIterator for Iter<'a, T> {}
+impl<'a, T, I: ArenaIndex, G: GenerationalIndex> FusedIterator for Iter<'a, T, I, G> {}
 
-impl<'a, T> IntoIterator for &'a mut Arena<T> {
-    type Item = (Index<T>, &'a mut T);
-    type IntoIter = IterMut<'a, T>;
+impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a mut Arena<T, I, G> {
+    type Item = (Index<T, I, G>, &'a mut T);
+    type IntoIter = IterMut<'a, T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
     }
@@ -1106,9 +1107,9 @@ impl<'a, T> IntoIterator for &'a mut Arena<T> {
 /// # Examples
 ///
 /// ```
-/// use typed_generational_arena::Arena;
+/// use typed_generational_arena::StandardArena;
 ///
-/// let mut arena = Arena::new();
+/// let mut arena = StandardArena::new();
 /// for i in 0..10 {
 ///     arena.insert(i * i);
 /// }
@@ -1118,13 +1119,14 @@ impl<'a, T> IntoIterator for &'a mut Arena<T> {
 /// }
 /// ```
 #[derive(Debug)]
-pub struct IterMut<'a, T: 'a> {
+pub struct IterMut<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> {
     len: usize,
-    inner: iter::Enumerate<slice::IterMut<'a, Entry<T>>>,
+    inner: iter::Enumerate<slice::IterMut<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T> Iterator for IterMut<'a, T> {
-    type Item = (Index<T>, &'a mut T);
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> Iterator
+for IterMut<'a, T, I, G> {
+    type Item = (Index<T, I, G>, &'a mut T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -1138,7 +1140,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index::new(index, generation);
+                    let idx = Index::new(I::from_idx(index), generation);
                     return Some((idx, value));
                 }
                 None => {
@@ -1154,7 +1156,8 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     }
 }
 
-impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> DoubleEndedIterator
+for IterMut<'a, T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.next_back() {
@@ -1167,7 +1170,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
                     },
                 )) => {
                     self.len -= 1;
-                    let idx = Index::new(index, generation);
+                    let idx = Index::new(I::from_idx(index), generation);
                     return Some((idx, value));
                 }
                 None => {
@@ -1179,13 +1182,15 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> ExactSizeIterator
+for IterMut<'a, T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a, T> FusedIterator for IterMut<'a, T> {}
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> FusedIterator
+for IterMut<'a, T, I, G> {}
 
 /// An iterator that removes elements from the arena.
 ///
@@ -1198,9 +1203,9 @@ impl<'a, T> FusedIterator for IterMut<'a, T> {}
 /// # Examples
 ///
 /// ```
-/// use typed_generational_arena::Arena;
+/// use typed_generational_arena::StandardArena;
 ///
-/// let mut arena = Arena::new();
+/// let mut arena = StandardArena::new();
 /// let idx_1 = arena.insert("hello");
 /// let idx_2 = arena.insert("world");
 ///
@@ -1213,19 +1218,19 @@ impl<'a, T> FusedIterator for IterMut<'a, T> {}
 /// assert!(arena.get(idx_2).is_none());
 /// ```
 #[derive(Debug)]
-pub struct Drain<'a, T: 'a> {
-    inner: iter::Enumerate<vec::Drain<'a, Entry<T>>>,
+pub struct Drain<'a, T: 'a, I: ArenaIndex, G: GenerationalIndex> {
+    inner: iter::Enumerate<vec::Drain<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T> Iterator for Drain<'a, T> {
-    type Item = (Index<T>, T);
+impl<'a, T, I: ArenaIndex, G: GenerationalIndex> Iterator for Drain<'a, T, I, G> {
+    type Item = (Index<T, I, G>, T);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.next() {
                 Some((_, Entry::Free { .. })) => continue,
                 Some((index, Entry::Occupied { generation, value })) => {
-                    let idx = Index::new(index, generation);
+                    let idx = Index::new(I::from_idx(index), generation);
                     return Some((idx, value));
                 }
                 None => return None,
@@ -1234,7 +1239,7 @@ impl<'a, T> Iterator for Drain<'a, T> {
     }
 }
 
-impl<T> Extend<T> for Arena<T> {
+impl<T, Idx: ArenaIndex, G: GenerationalIndex> Extend<T> for Arena<T, Idx, G> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for t in iter {
             self.insert(t);
@@ -1242,7 +1247,7 @@ impl<T> Extend<T> for Arena<T> {
     }
 }
 
-impl<T> FromIterator<T> for Arena<T> {
+impl<T, Idx: ArenaIndex, G: GenerationalIndex> FromIterator<T> for Arena<T, Idx, G> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, upper) = iter.size_hint();
@@ -1254,16 +1259,17 @@ impl<T> FromIterator<T> for Arena<T> {
     }
 }
 
-impl<T> ops::Index<Index<T>> for Arena<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> ops::Index<Index<T, I, G>>
+for Arena<T, I, G> {
     type Output = T;
 
-    fn index(&self, index: Index<T>) -> &Self::Output {
+    fn index(&self, index: Index<T, I, G>) -> &Self::Output {
         self.get(index).expect("No element at index")
     }
 }
 
-impl<T> ops::IndexMut<Index<T>> for Arena<T> {
-    fn index_mut(&mut self, index: Index<T>) -> &mut Self::Output {
+impl<T, I: ArenaIndex, G: GenerationalIndex> ops::IndexMut<Index<T, I, G>> for Arena<T, I, G> {
+    fn index_mut(&mut self, index: Index<T, I, G>) -> &mut Self::Output {
         self.get_mut(index).expect("No element at index")
     }
 }
