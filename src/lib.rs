@@ -163,13 +163,43 @@ cfg_if! {
 use core::cmp;
 use core::iter::{self, Extend, FromIterator, FusedIterator};
 use core::mem;
-use core::ops;
+use core::ops::{self, AddAssign};
 use core::slice;
+use core::default::Default;
+
+use num_traits::{ToPrimitive, FromPrimitive};
 
 #[cfg(feature = "serde")]
 mod serde_impl;
 #[cfg(feature = "serde")]
 use serde::{Serialize, Deserialize};
+
+/// A type which can be used as the index of a generation.
+pub trait GenerationalIndex : Eq {
+    /// Get an object representing the first possible generation
+    fn first_generation() -> Self;
+    /// Increment the generation of this object. May wrap or panic on overflow depending on type.
+    fn increment_generation(&mut self);
+}
+
+impl<T: Eq + FromPrimitive + AddAssign + Default> GenerationalIndex for T {
+    fn first_generation() -> Self { Default::default() }
+    fn increment_generation(&mut self) { *self += Self::from_u8(1).unwrap() }
+}
+
+/// If this is used as a generational index, then the arena ignores generation
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IgnoreGeneration;
+
+impl GenerationalIndex for IgnoreGeneration {
+    fn first_generation() -> Self { IgnoreGeneration }
+    fn increment_generation(&mut self) {}
+}
+
+/// A type which can be used as an index to an arena
+pub trait ArenaIndex: ToPrimitive + FromPrimitive {}
+impl<T: ToPrimitive + FromPrimitive> ArenaIndex for T {}
 
 /// The `Arena` allows inserting and removing elements that are referred to by
 /// `Index`.
