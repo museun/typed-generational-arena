@@ -1,31 +1,10 @@
-use super::{Arena, Entry, Index, Vec, DEFAULT_CAPACITY};
+use super::{Arena, Entry, Vec, DEFAULT_CAPACITY};
 use core::cmp;
 use core::fmt;
 use core::iter;
 use core::marker::PhantomData;
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
-
-impl<T> Serialize for Index<T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // Note: do not change the serialization format, or it may break
-        // forward and backward compatibility of serialized data!
-        (self.index, self.generation).serialize(serializer)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Index<T> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let (index, generation) = Deserialize::deserialize(deserializer)?;
-        Ok(Index<T> { index, generation })
-    }
-}
 
 impl<T> Serialize for Arena<T>
 where

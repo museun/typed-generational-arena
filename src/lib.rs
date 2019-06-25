@@ -168,6 +168,8 @@ use core::slice;
 
 #[cfg(feature = "serde")]
 mod serde_impl;
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize};
 
 /// The `Arena` allows inserting and removing elements that are referred to by
 /// `Index`.
@@ -175,16 +177,23 @@ mod serde_impl;
 /// [See the module-level documentation for example usage and motivation.](./index.html)
 #[derive(Clone, Debug)]
 pub struct Arena<T> {
+    // It is a breaking change to modify these three members, as they are needed for serialization
     items: Vec<Entry<T>>,
     generation: u64,
-    free_list_head: Option<usize>,
     len: usize,
+    free_list_head: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
 enum Entry<T> {
     Free { next_free: Option<usize> },
     Occupied { generation: u64, value: T },
+}
+
+impl<T> Default for Entry<T> {
+    fn default() -> Entry<T> {
+        Entry::Free { next_free : None }
+    }
 }
 
 mod delegate_untyped_index {
@@ -209,9 +218,11 @@ mod delegate_untyped_index {
 /// let idx = arena.insert(123);
 /// assert_eq!(arena[idx], 123);
 /// ```
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Index<T> {
     index: usize,
     generation: u64,
+    #[cfg_attr(feature = "serde", serde(skip))]
     _phantom: core::marker::PhantomData<fn() -> T>
 }
 impl<T> Index<T> {
