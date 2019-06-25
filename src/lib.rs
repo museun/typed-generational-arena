@@ -144,6 +144,7 @@ typed-generational-arena = { version = "0.1", features = ["serde"] }
 #![no_std]
 #![cfg_attr(not(feature = "std"), feature(alloc))]
 
+extern crate num_traits;
 #[macro_use]
 extern crate cfg_if;
 #[cfg(feature = "serde")]
