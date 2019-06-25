@@ -77,8 +77,11 @@ First, add `typed-generational-arena` to your `Cargo.toml`:
 typed-generational-arena = "0.1"
 ```
 
-Then, import the crate and use the
+Then, import the crate and use one of the variations of the
 [`typed_generational_arena::Arena`](./struct.Arena.html) type!
+In these examples, we use `typed_generational_arena::StandardArena`,
+but you can use any combination of index and generation ID
+best fits your purposes.
 
 ```rust
 extern crate typed_generational_arena;

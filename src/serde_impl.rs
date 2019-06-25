@@ -1,14 +1,15 @@
-use super::{Arena, Entry, Vec, DEFAULT_CAPACITY};
-use core::cmp;
+use super::{Arena, GenerationalIndex, ArenaIndex, Entry, Vec, DEFAULT_CAPACITY};
 use core::fmt;
 use core::iter;
 use core::marker::PhantomData;
 use serde::de::{Deserialize, Deserializer, SeqAccess, Visitor};
 use serde::ser::{Serialize, Serializer};
 
-impl<T> Serialize for Arena<T>
+impl<T, I, G> Serialize for Arena<T, I, G>
 where
     T: Serialize,
+    I: ArenaIndex,
+    G: GenerationalIndex + Serialize
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -23,9 +24,12 @@ where
     }
 }
 
-impl<'de, T> Deserialize<'de> for Arena<T>
+impl<'de, T, I, G> Deserialize<'de>
+for Arena<T, I, G>
 where
     T: Deserialize<'de>,
+    I: ArenaIndex,
+    G: GenerationalIndex + Deserialize<'de>
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -35,11 +39,11 @@ where
     }
 }
 
-struct ArenaVisitor<T> {
-    marker: PhantomData<fn() -> Arena<T>>,
+struct ArenaVisitor<T, I: ArenaIndex, G: GenerationalIndex> {
+    marker: PhantomData<fn() -> Arena<T, I, G>>,
 }
 
-impl<T> ArenaVisitor<T> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> ArenaVisitor<T, I, G> {
     fn new() -> Self {
         Self {
             marker: PhantomData,
@@ -47,11 +51,13 @@ impl<T> ArenaVisitor<T> {
     }
 }
 
-impl<'de, T> Visitor<'de> for ArenaVisitor<T>
+impl<'de, T, I, G> Visitor<'de> for ArenaVisitor<T, I, G>
 where
     T: Deserialize<'de>,
+    I: ArenaIndex,
+    G: GenerationalIndex + Deserialize<'de>
 {
-    type Value = Arena<T>;
+    type Value = Arena<T, I, G>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(formatter, "a generational arena")
@@ -64,11 +70,11 @@ where
         let init_cap = access.size_hint().unwrap_or(DEFAULT_CAPACITY);
         let mut items = Vec::with_capacity(init_cap);
 
-        let mut generation = 0;
-        while let Some(element) = access.next_element::<Option<(u64, T)>>()? {
+        let mut generation = G::first_generation();
+        while let Some(element) = access.next_element::<Option<(G, T)>>()? {
             let item = match element {
                 Some((gen, value)) => {
-                    generation = cmp::max(generation, gen);
+                    generation = if generation.generation_lt(&gen) { gen } else { generation };
                     Entry::Occupied {
                         generation: gen,
                         value,
@@ -94,7 +100,7 @@ where
         for (idx, entry) in items.iter_mut().enumerate().rev() {
             if let Entry::Free { next_free } = entry {
                 *next_free = free_list_head;
-                free_list_head = Some(idx);
+                free_list_head = Some(I::from_idx(idx));
                 len -= 1;
             }
         }

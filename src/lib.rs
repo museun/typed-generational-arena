@@ -797,7 +797,7 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
     /// let mut arena = StandardArena::with_capacity(10);
     /// arena.reserve(5);
     /// assert_eq!(arena.capacity(), 15);
-    /// # let _: Arena<usize> = arena;
+    /// # let _: StandardArena<usize> = arena;
     /// ```
     pub fn reserve(&mut self, additional_capacity: usize) {
         let start = self.items.len();
