@@ -5,7 +5,7 @@ extern crate serde;
 extern crate bincode;
 extern crate serde_test;
 
-use typed_generational_arena::{StandardArena, Index};
+use typed_generational_arena::{U64Arena as Arena, U64Index as Index};
 use serde::{Deserialize, Serialize};
 use serde_test::{assert_ser_tokens, Token};
 use std::fmt::Debug;

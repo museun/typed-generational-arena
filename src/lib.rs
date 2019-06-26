@@ -149,6 +149,7 @@ typed-generational-arena = { version = "0.2", features = ["serde"] }
 
 extern crate num_traits;
 extern crate derivative;
+extern crate nonzero_ext;
 #[macro_use]
 extern crate cfg_if;
 #[cfg(feature = "serde")]
@@ -167,12 +168,13 @@ cfg_if! {
 use core::cmp::{self, Ordering};
 use core::iter::{self, Extend, FromIterator, FusedIterator};
 use core::mem;
-use core::ops::{self, AddAssign};
+use core::ops::{self, AddAssign, Add};
 use core::slice;
 use core::default::Default;
 
-use num_traits::{ToPrimitive, FromPrimitive};
+use num_traits::{WrappingAdd, ToPrimitive, FromPrimitive, Zero, One};
 use derivative::Derivative;
+use nonzero_ext::{NonZeroAble, NonZero};
 
 #[cfg(feature = "serde")]
 mod serde_impl;
@@ -189,11 +191,67 @@ pub trait GenerationalIndex : Copy + Eq {
     fn generation_lt(&self, other : &Self) -> bool;
 }
 
-impl<T: Eq + FromPrimitive + AddAssign + Default + PartialOrd + Copy> GenerationalIndex for T {
+/// A generation counter which is always nonzero. Useful for size optimizations on Option<Index>
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NonzeroGeneration<T: NonZeroAble> {
+    gen : T::NonZero
+}
+
+impl<T> GenerationalIndex for NonzeroGeneration<T> where
+    T: NonZeroAble + One + Add<Output=T> + Copy + Eq
+        + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
+    T::NonZero: PartialOrd + Eq + Copy {
+    #[inline(always)]
+    fn first_generation() -> Self {
+        NonzeroGeneration {  gen : T::one().as_nonzero().unwrap() }
+    }
+    #[inline(always)]
+    fn increment_generation(&mut self) {
+        self.gen = (T::from(self.gen.get()) + T::one()).as_nonzero().unwrap()
+    }
+    #[inline(always)]
+    fn generation_lt(&self, other : &Self) -> bool {
+        self.gen < other.gen
+    }
+}
+
+/// A wrapping generation counter which is always nonzero.
+/// Useful for size optimizations on Option<Index>
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct NonzeroWrapGeneration<T: NonZeroAble> {
+    gen : T::NonZero
+}
+
+impl<T> GenerationalIndex for NonzeroWrapGeneration<T> where
+    T: NonZeroAble + One + Zero + Copy + Eq + WrappingAdd
+        + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
+    T::NonZero: PartialOrd + Eq + Copy {
+    #[inline(always)]
+    fn first_generation() -> Self {
+        NonzeroWrapGeneration {  gen : T::one().as_nonzero().unwrap() }
+    }
+    #[inline(always)]
+    fn increment_generation(&mut self) {
+        let new = T::from(self.gen.get()).wrapping_add(&T::one());
+        self.gen = if T::zero() == new {
+            Self::first_generation().gen
+        } else {
+            new.as_nonzero().unwrap()
+        }
+    }
+    #[inline(always)]
+    fn generation_lt(&self, other : &Self) -> bool {
+        self.gen < other.gen
+    }
+}
+
+impl<T: Eq + One + AddAssign + Default + PartialOrd + Copy> GenerationalIndex for T {
     #[inline(always)]
     fn first_generation() -> Self { Default::default() }
     #[inline(always)]
-    fn increment_generation(&mut self) { *self += Self::from_u8(1).unwrap() }
+    fn increment_generation(&mut self) { *self += Self::one() }
     #[inline(always)]
     fn generation_lt(&self, other : &Self) -> bool { self.lt(other) }
 }
@@ -236,22 +294,43 @@ pub struct Arena<T, I : ArenaIndex = usize, G: GenerationalIndex = usize> {
     free_list_head: Option<I>,
 }
 
-/// A standard `Arena` of `T` indexed by `usize`, with `u64` generations
-pub type StandardArena<T> = Arena<T, usize, u64>;
-/// An arena which can only hold up to \(2^{32}\) elements and generations
-pub type SmallArena<T> = Arena<T, u32, u32>;
-/// An arena which can only hold up to \(2^{16}\) elements and generations
-pub type TinyArena<T> = Arena<T, u16, u16>;
+/// An arena of `T` indexed by `usize`, with `2^{64}` generations
+pub type U64Arena<T> = Arena<T, usize, u64>;
+/// An index into a `U64Arena`
+pub type U64Index<T> = Index<T, usize, u64>;
+/// A standard arena of `T` indexed by `usize`, with `2^{64} - 1` generations
+pub type StandardArena<T> =  Arena<T, usize, NonzeroGeneration<usize>>;
+/// A typed index into a `StandardArena`
+pub type StandardIndex<T> = Index<T, usize, NonzeroGeneration<u64>>;
+/// An arena which can only hold up to \(2^{32} - 1\) elements and generations
+pub type SmallArena<T> = Arena<T, u32, NonzeroGeneration<u32>>;
+/// A typed index into a `StandardArena`
+pub type SmallIndex<T> = Index<T, u32, NonzeroGeneration<u32>>;
+/// An arena which can only hold up to \(2^{16}\) elements and \(2^{16} - 1\) generations
+pub type TinyArena<T> = Arena<T, u16, NonzeroGeneration<u16>>;
+/// A typed index into a `StandardArena`
+pub type TinyIndex<T> = Index<T, u16, NonzeroGeneration<u16>>;
 /// An arena which can only hold up to \(2^{16}\) elements, but unlimited
-/// generations,  with the caveat that generations after \(2^{16} wrap and hence
+/// generations, with the caveat that generations after \(2^{16} - 1\) wrap and hence
 /// may, with low probability,  collide,  leading, for example, to reading a new value
 ///  when the old one was deleted.
-pub type TinyWrapArena<T> = Arena<T, u16, core::num::Wrapping<u16>>;
+pub type TinyWrapArena<T> = Arena<T, u16, NonzeroWrapGeneration<u16>>;
+/// A typed index into a `TinyWrapArena`
+pub type TinyWrapIndex<T> = Index<T, u16, NonzeroWrapGeneration<u16>>;
 /// An arena which can only hold up to \(2^{8}\) elements, but unlimited
 /// generations, with the caveat that generations after \(2^{8}\) wrap
 /// and hence may  collide, leading, for example, to reading a new value when
 /// the old one was deleted.
 pub type NanoArena<T> = Arena<T, u8, core::num::Wrapping<u8>>;
+/// A typed index into a `NanoArena`
+pub type NanoIndex<T> = Index<T, u8, core::num::Wrapping<u8>>;
+/// An arena which can only hold up to \(2^{8} - 1\) elements, but unlimited
+/// generations, with the caveat that generations after \(2^{8} - 1\) wrap
+/// and hence may  collide, leading, for example, to reading a new value when
+/// the old one was deleted.
+pub type PicoArena<T> = Arena<T, u8, NonzeroWrapGeneration<u8>>;
+/// A typed index into a `NanoArena`
+pub type PicoIndex<T> = Index<T, u8, NonzeroWrapGeneration<u8>>;
 
 #[derive(Clone, Debug)]
 enum Entry<T, I : ArenaIndex = usize, G: GenerationalIndex = u64> {
