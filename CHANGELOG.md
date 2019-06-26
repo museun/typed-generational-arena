@@ -1,6 +1,6 @@
 # 0.2.0
 
-Unreleased
+Released 2019-06-25.
 
 * Generalized `Arena` to support arbitrary integer types for indices and generations
 
