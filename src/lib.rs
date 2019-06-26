@@ -238,6 +238,20 @@ pub struct Arena<T, I : ArenaIndex = usize, G: GenerationalIndex = usize> {
 
 /// A standard `Arena` of `T` indexed by `usize`, with `u64` generations
 pub type StandardArena<T> = Arena<T, usize, u64>;
+/// An arena which can only hold up to \(2^{32}\) elements and generations
+pub type SmallArena<T> = Arena<T, u32, u32>;
+/// An arena which can only hold up to \(2^{16}\) elements and generations
+pub type TinyArena<T> = Arena<T, u16, u16>;
+/// An arena which can only hold up to \(2^{16}\) elements, but unlimited
+/// generations,  with the caveat that generations after \(2^{16} wrap and hence
+/// may, with low probability,  collide,  leading, for example, to reading a new value
+///  when the old one was deleted.
+pub type TinyWrapArena<T> = Arena<T, u16, core::num::Wrapping<u16>>;
+/// An arena which can only hold up to \(2^{8}\) elements, but unlimited
+/// generations, with the caveat that generations after \(2^{8}\) wrap
+/// and hence may  collide, leading, for example, to reading a new value when
+/// the old one was deleted.
+pub type NanoArena<T> = Arena<T, u8, core::num::Wrapping<u8>>;
 
 #[derive(Clone, Debug)]
 enum Entry<T, I : ArenaIndex = usize, G: GenerationalIndex = u64> {
