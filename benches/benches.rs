@@ -3,7 +3,7 @@ extern crate criterion;
 extern crate typed_generational_arena;
 
 use criterion::{Criterion, ParameterizedBenchmark, Throughput};
-use typed_generational_arena::{Arena, Index};
+use typed_generational_arena::{StandardArena as Arena, StandardIndex as Index};
 
 #[derive(Default)]
 struct Small(usize);

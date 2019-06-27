@@ -181,14 +181,18 @@ mod serde_impl;
 #[cfg(feature = "serde")]
 use serde::{Serialize, Deserialize};
 
-/// A type which can be used as the index of a generation.
-pub trait GenerationalIndex : Copy + Eq {
+/// A type which can be used as the index of a generation which may not be able to be incremented
+pub trait FixedGenerationalIndex : Copy + Eq {
     /// Get an object representing the first possible generation
     fn first_generation() -> Self;
-    /// Increment the generation of this object. May wrap or panic on overflow depending on type.
-    fn increment_generation(&mut self);
     /// Compare this generation with another.
     fn generation_lt(&self, other : &Self) -> bool;
+}
+
+/// A type which can be used as the index of a generation, which can be incremented
+pub trait GenerationalIndex : FixedGenerationalIndex {
+    /// Increment the generation of this object. May wrap or panic on overflow depending on type.
+    fn increment_generation(&mut self);
 }
 
 /// A generation counter which is always nonzero. Useful for size optimizations on Option<Index>
@@ -198,7 +202,8 @@ pub struct NonzeroGeneration<T: NonZeroAble> {
     gen : T::NonZero
 }
 
-impl<T> GenerationalIndex for NonzeroGeneration<T> where
+
+impl<T> FixedGenerationalIndex for NonzeroGeneration<T> where
     T: NonZeroAble + One + Add<Output=T> + Copy + Eq
         + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
     T::NonZero: PartialOrd + Eq + Copy {
@@ -207,12 +212,18 @@ impl<T> GenerationalIndex for NonzeroGeneration<T> where
         NonzeroGeneration {  gen : T::one().as_nonzero().unwrap() }
     }
     #[inline(always)]
-    fn increment_generation(&mut self) {
-        self.gen = (T::from(self.gen.get()) + T::one()).as_nonzero().unwrap()
-    }
-    #[inline(always)]
     fn generation_lt(&self, other : &Self) -> bool {
         self.gen < other.gen
+    }
+}
+
+impl<T> GenerationalIndex for NonzeroGeneration<T> where
+    T: NonZeroAble + One + Add<Output=T> + Copy + Eq
+        + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
+    T::NonZero: PartialOrd + Eq + Copy {
+    #[inline(always)]
+    fn increment_generation(&mut self) {
+        self.gen = (T::from(self.gen.get()) + T::one()).as_nonzero().unwrap()
     }
 }
 
@@ -224,7 +235,7 @@ pub struct NonzeroWrapGeneration<T: NonZeroAble> {
     gen : T::NonZero
 }
 
-impl<T> GenerationalIndex for NonzeroWrapGeneration<T> where
+impl<T> FixedGenerationalIndex for NonzeroWrapGeneration<T> where
     T: NonZeroAble + One + Zero + Copy + Eq + WrappingAdd
         + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
     T::NonZero: PartialOrd + Eq + Copy {
@@ -232,6 +243,17 @@ impl<T> GenerationalIndex for NonzeroWrapGeneration<T> where
     fn first_generation() -> Self {
         NonzeroWrapGeneration {  gen : T::one().as_nonzero().unwrap() }
     }
+    #[inline(always)]
+    fn generation_lt(&self, other : &Self) -> bool {
+        self.gen < other.gen
+    }
+}
+
+impl<T> GenerationalIndex for NonzeroWrapGeneration<T> where
+    T: NonZeroAble + One + Zero + Copy + Eq + WrappingAdd
+        + From<<<T as NonZeroAble>::NonZero as NonZero>::Primitive>,
+    T::NonZero: PartialOrd + Eq + Copy {
+
     #[inline(always)]
     fn increment_generation(&mut self) {
         let new = T::from(self.gen.get()).wrapping_add(&T::one());
@@ -241,19 +263,19 @@ impl<T> GenerationalIndex for NonzeroWrapGeneration<T> where
             new.as_nonzero().unwrap()
         }
     }
+}
+
+
+impl<T: Eq + One + AddAssign + Default + PartialOrd + Copy> FixedGenerationalIndex for T {
     #[inline(always)]
-    fn generation_lt(&self, other : &Self) -> bool {
-        self.gen < other.gen
-    }
+    fn first_generation() -> Self { Default::default() }
+    #[inline(always)]
+    fn generation_lt(&self, other : &Self) -> bool { self.lt(other) }
 }
 
 impl<T: Eq + One + AddAssign + Default + PartialOrd + Copy> GenerationalIndex for T {
     #[inline(always)]
-    fn first_generation() -> Self { Default::default() }
-    #[inline(always)]
     fn increment_generation(&mut self) { *self += Self::one() }
-    #[inline(always)]
-    fn generation_lt(&self, other : &Self) -> bool { self.lt(other) }
 }
 
 /// If this is used as a generational index, then the arena ignores generation
@@ -261,9 +283,23 @@ impl<T: Eq + One + AddAssign + Default + PartialOrd + Copy> GenerationalIndex fo
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IgnoreGeneration;
 
-impl GenerationalIndex for IgnoreGeneration {
+impl FixedGenerationalIndex for IgnoreGeneration {
     fn first_generation() -> Self { IgnoreGeneration }
+    fn generation_lt(&self, _other : &Self) -> bool { false }
+}
+
+impl GenerationalIndex for IgnoreGeneration {
     fn increment_generation(&mut self) {}
+}
+
+/// If this is used as a generational index, then the arena is no longer generational
+/// and does not allow element removal
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct DisableRemoval;
+
+impl FixedGenerationalIndex for DisableRemoval {
+    fn first_generation() -> Self { DisableRemoval }
     fn generation_lt(&self, _other : &Self) -> bool { false }
 }
 
@@ -281,12 +317,34 @@ impl<T: ToPrimitive + FromPrimitive + Copy> ArenaIndex for T {
     fn to_idx(self) -> usize { self.to_usize().unwrap() }
 }
 
+/// An arena index which is always nonzero. Useful for Option<T> size optimizations
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(feature="serde", derive(Serialize, Deserialize))]
+pub struct NonZeroIndex<T: NonZeroAble> {
+    idx: T::NonZero
+}
+
+impl<T> ArenaIndex for NonZeroIndex<T> where
+    T: NonZeroAble + FromPrimitive,
+    NonZeroIndex<T>: Copy,
+    <<T as NonZeroAble>::NonZero as NonZero>::Primitive: ToPrimitive {
+    #[inline(always)]
+    fn from_idx(idx: usize) -> Self {
+        NonZeroIndex{ idx : T::from_usize(idx + 1).unwrap().as_nonzero().unwrap() }
+    }
+    #[inline(always)]
+    fn to_idx(self) -> usize {
+        self.idx.get().to_usize().unwrap() - 1
+    }
+}
+
+
 /// The `Arena` allows inserting and removing elements that are referred to by
 /// `Index`.
 ///
 /// [See the module-level documentation for example usage and motivation.](./index.html)
 #[derive(Clone, Debug)]
-pub struct Arena<T, I : ArenaIndex = usize, G: GenerationalIndex = usize> {
+pub struct Arena<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = usize> {
     // It is a breaking change to modify these three members, as they are needed for serialization
     items: Vec<Entry<T, I, G>>,
     generation: G,
@@ -331,9 +389,33 @@ pub type NanoIndex<T> = Index<T, u8, core::num::Wrapping<u8>>;
 pub type PicoArena<T> = Arena<T, u8, NonzeroWrapGeneration<u8>>;
 /// A typed index into a `NanoArena`
 pub type PicoIndex<T> = Index<T, u8, NonzeroWrapGeneration<u8>>;
+/// A slab arena with a given index, which does *not* support efficient removal
+pub type Slab<T, I> = Arena<T, I, DisableRemoval>;
+/// An index into a slab of type `T` by a certain type
+pub type SlabIndex<T, I> = Index<T, I, DisableRemoval>;
+/// A standard slab arena which can hold up to `std::usize::MAX` elements but does
+/// *not* support element removal
+pub type StandardSlab<T> = Slab<T, usize>;
+/// An index into a `Slab<T>`
+pub type StandardSlabIndex<T> = SlabIndex<T, usize>;
+/// A slab arena which can hold up to `2^{32}` elements but does *not* support
+/// element removal
+pub type SmallSlab<T> = Slab<T, u32>;
+/// An index into a `SmallSlab<T>`
+pub type SmallSlabIndex<T> = SlabIndex<T, u32>;
+/// A slab arena which can hold up to `std::usize::MAX - 1` elements but does
+/// *not* support element removal, and has size optimized optional indices
+pub type PtrSlab<T> = Slab<T, NonZeroIndex<usize>>;
+/// An index into a `PtrSlab<T>`
+pub type PtrSlabIndex<T> = SlabIndex<T, NonZeroIndex<usize>>;
+/// A slab arena which can hold up to `2^{32} - 1` elements but does *not* support
+/// element removal, and has size optimized optional indices
+pub type SmallPtrSlab<T> = Slab<T, NonZeroIndex<u32>>;
+/// An index into a `SmallPtrSlab<T>`
+pub type SmallPtrSlabIndex<T> = SlabIndex<T, NonZeroIndex<u32>>;
 
 #[derive(Clone, Debug)]
-enum Entry<T, I : ArenaIndex = usize, G: GenerationalIndex = u64> {
+enum Entry<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
     Free { next_free: Option<I> },
     Occupied { generation: G, value: T },
 }
@@ -355,7 +437,7 @@ enum Entry<T, I : ArenaIndex = usize, G: GenerationalIndex = u64> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Derivative)]
 #[derivative(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Index<T, I: ArenaIndex = usize, G: GenerationalIndex = u64> {
+pub struct Index<T, I: ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
 
     index: I,
     generation: G,
@@ -369,9 +451,9 @@ pub struct Index<T, I: ArenaIndex = usize, G: GenerationalIndex = u64> {
     _phantom: core::marker::PhantomData<fn() -> T>
 }
 
-impl<T, I: ArenaIndex + Copy, G: GenerationalIndex + Copy> Copy for Index<T, I, G> {}
+impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex + Copy> Copy for Index<T, I, G> {}
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> Index<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> Index<T, I, G> {
     #[inline]
     pub(self) fn new(index : I, generation : G) -> Index<T, I, G> {
         Index{ index : index, generation : generation, _phantom : std::marker::PhantomData }
@@ -379,7 +461,7 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> Index<T, I, G> {
 }
 
 
-impl<T, I: ArenaIndex + PartialOrd, G: GenerationalIndex> PartialOrd
+impl<T, I: ArenaIndex + PartialOrd, G: FixedGenerationalIndex> PartialOrd
 for Index<T, I, G> {
     fn partial_cmp(&self, other : &Self) -> Option<Ordering> {
         match self.index.partial_cmp(&other.index) {
@@ -403,14 +485,14 @@ for Index<T, I, G> {
     }
 }
 
-impl<T, I: ArenaIndex + Ord, G: GenerationalIndex> Ord for Index<T, I, G> {
+impl<T, I: ArenaIndex + Ord, G: FixedGenerationalIndex> Ord for Index<T, I, G> {
     fn cmp(&self, other : &Self) -> Ordering { self.partial_cmp(other).unwrap() }
 }
 
 
 const DEFAULT_CAPACITY: usize = 4;
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> Arena<T, I, G> {
     /// Constructs a new, empty `Arena`.
     ///
     /// # Examples
@@ -565,90 +647,6 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
         self.try_insert(value)
             .map_err(|_| ())
             .expect("inserting will always succeed after reserving additional space")
-    }
-
-    /// Remove the element at index `i` from the arena.
-    ///
-    /// If the element at index `i` is still in the arena, then it is
-    /// returned. If it is not in the arena, then `None` is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use typed_generational_arena::StandardArena;
-    ///
-    /// let mut arena = StandardArena::new();
-    /// let idx = arena.insert(42);
-    ///
-    /// assert_eq!(arena.remove(idx), Some(42));
-    /// assert_eq!(arena.remove(idx), None);
-    /// ```
-    pub fn remove(&mut self, i: Index<T, I, G>) -> Option<T> {
-        if i.index.to_idx() >= self.items.len() {
-            return None;
-        }
-
-        let entry = mem::replace(
-            &mut self.items[i.index.to_idx()],
-            Entry::Free {
-                next_free: self.free_list_head,
-            },
-        );
-        match entry {
-            Entry::Occupied { generation, value } => {
-                if generation == i.generation {
-                    self.generation.increment_generation();
-                    self.free_list_head = Some(i.index);
-                    self.len -= 1;
-                    Some(value)
-                } else {
-                    self.items[i.index.to_idx()] = Entry::Occupied { generation, value };
-                    None
-                }
-            }
-            e @ Entry::Free { .. } => {
-                self.items[i.index.to_idx()] = e;
-                None
-            }
-        }
-    }
-
-    /// Retains only the elements specified by the predicate.
-    ///
-    /// In other words, remove all indices such that `predicate(index, &value)` returns `false`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use typed_generational_arena::StandardArena;
-    ///
-    /// let mut crew = StandardArena::new();
-    /// crew.extend(&["Jim Hawkins", "John Silver", "Alexander Smollett", "Israel Hands"]);
-    /// let pirates = ["John Silver", "Israel Hands"]; // too dangerous to keep them around
-    /// crew.retain(|_index, member| !pirates.contains(member));
-    /// let mut crew_members = crew.iter().map(|(_, member)| **member);
-    /// assert_eq!(crew_members.next(), Some("Jim Hawkins"));
-    /// assert_eq!(crew_members.next(), Some("Alexander Smollett"));
-    /// assert!(crew_members.next().is_none());
-    /// ```
-    pub fn retain(&mut self, mut predicate: impl FnMut(Index<T, I, G>, &T) -> bool) {
-        for i in 0..self.len {
-            let remove = match &self.items[i] {
-                Entry::Occupied { generation, value } => {
-                    let index = Index::new(I::from_idx(i), *generation);
-                    if predicate(index, value) {
-                        None
-                    } else {
-                        Some(index)
-                    }
-                }
-
-                _ => None,
-            };
-            if let Some(index) = remove {
-                self.remove(index);
-            }
-        }
     }
 
     /// Is the element at index `i` in the arena?
@@ -997,7 +995,93 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for Arena<T, I, G> {
+impl<T, I: ArenaIndex, G: GenerationalIndex> Arena<T, I, G> {
+    /// Remove the element at index `i` from the arena.
+    ///
+    /// If the element at index `i` is still in the arena, then it is
+    /// returned. If it is not in the arena, then `None` is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use typed_generational_arena::StandardArena;
+    ///
+    /// let mut arena = StandardArena::new();
+    /// let idx = arena.insert(42);
+    ///
+    /// assert_eq!(arena.remove(idx), Some(42));
+    /// assert_eq!(arena.remove(idx), None);
+    /// ```
+    pub fn remove(&mut self, i: Index<T, I, G>) -> Option<T> {
+        if i.index.to_idx() >= self.items.len() {
+            return None;
+        }
+
+        let entry = mem::replace(
+            &mut self.items[i.index.to_idx()],
+            Entry::Free {
+                next_free: self.free_list_head,
+            },
+        );
+        match entry {
+            Entry::Occupied { generation, value } => {
+                if generation == i.generation {
+                    self.generation.increment_generation();
+                    self.free_list_head = Some(i.index);
+                    self.len -= 1;
+                    Some(value)
+                } else {
+                    self.items[i.index.to_idx()] = Entry::Occupied { generation, value };
+                    None
+                }
+            }
+            e @ Entry::Free { .. } => {
+                self.items[i.index.to_idx()] = e;
+                None
+            }
+        }
+    }
+
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// In other words, remove all indices such that `predicate(index, &value)` returns `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use typed_generational_arena::StandardArena;
+    ///
+    /// let mut crew = StandardArena::new();
+    /// crew.extend(&["Jim Hawkins", "John Silver", "Alexander Smollett", "Israel Hands"]);
+    /// let pirates = ["John Silver", "Israel Hands"]; // too dangerous to keep them around
+    /// crew.retain(|_index, member| !pirates.contains(member));
+    /// let mut crew_members = crew.iter().map(|(_, member)| **member);
+    /// assert_eq!(crew_members.next(), Some("Jim Hawkins"));
+    /// assert_eq!(crew_members.next(), Some("Alexander Smollett"));
+    /// assert!(crew_members.next().is_none());
+    /// ```
+    pub fn retain(&mut self, mut predicate: impl FnMut(Index<T, I, G>, &T) -> bool) {
+        for i in 0..self.len {
+            let remove = match &self.items[i] {
+                Entry::Occupied { generation, value } => {
+                    let index = Index::new(I::from_idx(i), *generation);
+                    if predicate(index, value) {
+                        None
+                    } else {
+                        Some(index)
+                    }
+                }
+
+                _ => None,
+            };
+            if let Some(index) = remove {
+                self.remove(index);
+            }
+        }
+    }
+}
+
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> IntoIterator for Arena<T, I, G> {
     type Item = T;
     type IntoIter = IntoIter<T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
@@ -1029,12 +1113,12 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for Arena<T, I, G> {
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct IntoIter<T, I: ArenaIndex, G: GenerationalIndex> {
+pub struct IntoIter<T, I: ArenaIndex, G: FixedGenerationalIndex> {
     len: usize,
     inner: vec::IntoIter<Entry<T, I, G>>,
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> Iterator for IntoIter<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> Iterator for IntoIter<T, I, G> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1058,7 +1142,7 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> Iterator for IntoIter<T, I, G> {
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> DoubleEndedIterator for IntoIter<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> DoubleEndedIterator for IntoIter<T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             match self.inner.next_back() {
@@ -1076,15 +1160,15 @@ impl<T, I: ArenaIndex, G: GenerationalIndex> DoubleEndedIterator for IntoIter<T,
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> ExactSizeIterator for IntoIter<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> ExactSizeIterator for IntoIter<T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> FusedIterator for IntoIter<T, I, G> {}
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> FusedIterator for IntoIter<T, I, G> {}
 
-impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a Arena<T, I, G> {
+impl<'a, T, I: ArenaIndex, G: FixedGenerationalIndex> IntoIterator for &'a Arena<T, I, G> {
     type Item = (Index<T, I, G>, &'a T);
     type IntoIter = Iter<'a, T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
@@ -1113,12 +1197,12 @@ impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a Arena<T, I
 /// }
 /// ```
 #[derive(Clone, Debug)]
-pub struct Iter<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> {
+pub struct Iter<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> {
     len: usize,
     inner: iter::Enumerate<slice::Iter<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> Iterator for Iter<'a, T, I, G> {
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> Iterator for Iter<'a, T, I, G> {
     type Item = (Index<T, I, G>, &'a T);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1149,7 +1233,7 @@ impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> Iterator for Iter<'a,
     }
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> DoubleEndedIterator
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> DoubleEndedIterator
 for Iter<'a, T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
@@ -1175,15 +1259,15 @@ for Iter<'a, T, I, G> {
     }
 }
 
-impl<'a, T, I: ArenaIndex, G: GenerationalIndex> ExactSizeIterator for Iter<'a, T, I, G> {
+impl<'a, T, I: ArenaIndex, G: FixedGenerationalIndex> ExactSizeIterator for Iter<'a, T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a, T, I: ArenaIndex, G: GenerationalIndex> FusedIterator for Iter<'a, T, I, G> {}
+impl<'a, T, I: ArenaIndex, G: FixedGenerationalIndex> FusedIterator for Iter<'a, T, I, G> {}
 
-impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a mut Arena<T, I, G> {
+impl<'a, T, I: ArenaIndex, G: FixedGenerationalIndex> IntoIterator for &'a mut Arena<T, I, G> {
     type Item = (Index<T, I, G>, &'a mut T);
     type IntoIter = IterMut<'a, T, I, G>;
     fn into_iter(self) -> Self::IntoIter {
@@ -1212,12 +1296,12 @@ impl<'a, T, I: ArenaIndex, G: GenerationalIndex> IntoIterator for &'a mut Arena<
 /// }
 /// ```
 #[derive(Debug)]
-pub struct IterMut<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> {
+pub struct IterMut<'a, T: 'a, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> {
     len: usize,
     inner: iter::Enumerate<slice::IterMut<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> Iterator
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> Iterator
 for IterMut<'a, T, I, G> {
     type Item = (Index<T, I, G>, &'a mut T);
 
@@ -1249,7 +1333,7 @@ for IterMut<'a, T, I, G> {
     }
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> DoubleEndedIterator
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> DoubleEndedIterator
 for IterMut<'a, T, I, G> {
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
@@ -1275,14 +1359,14 @@ for IterMut<'a, T, I, G> {
     }
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> ExactSizeIterator
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> ExactSizeIterator
 for IterMut<'a, T, I, G> {
     fn len(&self) -> usize {
         self.len
     }
 }
 
-impl<'a, T, I: 'a + ArenaIndex, G: 'a + GenerationalIndex> FusedIterator
+impl<'a, T, I: 'a + ArenaIndex, G: 'a + FixedGenerationalIndex> FusedIterator
 for IterMut<'a, T, I, G> {}
 
 /// An iterator that removes elements from the arena.
@@ -1311,11 +1395,11 @@ for IterMut<'a, T, I, G> {}
 /// assert!(arena.get(idx_2).is_none());
 /// ```
 #[derive(Debug)]
-pub struct Drain<'a, T: 'a, I: ArenaIndex, G: GenerationalIndex> {
+pub struct Drain<'a, T: 'a, I: ArenaIndex, G: FixedGenerationalIndex> {
     inner: iter::Enumerate<vec::Drain<'a, Entry<T, I, G>>>,
 }
 
-impl<'a, T, I: ArenaIndex, G: GenerationalIndex> Iterator for Drain<'a, T, I, G> {
+impl<'a, T, I: ArenaIndex, G: FixedGenerationalIndex> Iterator for Drain<'a, T, I, G> {
     type Item = (Index<T, I, G>, T);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1332,7 +1416,7 @@ impl<'a, T, I: ArenaIndex, G: GenerationalIndex> Iterator for Drain<'a, T, I, G>
     }
 }
 
-impl<T, Idx: ArenaIndex, G: GenerationalIndex> Extend<T> for Arena<T, Idx, G> {
+impl<T, Idx: ArenaIndex, G: FixedGenerationalIndex> Extend<T> for Arena<T, Idx, G> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for t in iter {
             self.insert(t);
@@ -1340,7 +1424,7 @@ impl<T, Idx: ArenaIndex, G: GenerationalIndex> Extend<T> for Arena<T, Idx, G> {
     }
 }
 
-impl<T, Idx: ArenaIndex, G: GenerationalIndex> FromIterator<T> for Arena<T, Idx, G> {
+impl<T, Idx: ArenaIndex, G: FixedGenerationalIndex> FromIterator<T> for Arena<T, Idx, G> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, upper) = iter.size_hint();
@@ -1352,7 +1436,7 @@ impl<T, Idx: ArenaIndex, G: GenerationalIndex> FromIterator<T> for Arena<T, Idx,
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> ops::Index<Index<T, I, G>>
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> ops::Index<Index<T, I, G>>
 for Arena<T, I, G> {
     type Output = T;
 
@@ -1361,7 +1445,7 @@ for Arena<T, I, G> {
     }
 }
 
-impl<T, I: ArenaIndex, G: GenerationalIndex> ops::IndexMut<Index<T, I, G>> for Arena<T, I, G> {
+impl<T, I: ArenaIndex, G: FixedGenerationalIndex> ops::IndexMut<Index<T, I, G>> for Arena<T, I, G> {
     fn index_mut(&mut self, index: Index<T, I, G>) -> &mut Self::Output {
         self.get_mut(index).expect("No element at index")
     }
