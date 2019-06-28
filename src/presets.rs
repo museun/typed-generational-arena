@@ -7,7 +7,7 @@ pub type U64Index<T> = Index<T, usize, u64>;
 /// A standard arena of `T` indexed by `usize`, with `2^{64} - 1` generations
 pub type StandardArena<T> =  Arena<T, usize, NonzeroGeneration<usize>>;
 /// A typed index into a `StandardArena`
-pub type StandardIndex<T> = Index<T, usize, NonzeroGeneration<u64>>;
+pub type StandardIndex<T> = Index<T, usize, NonzeroGeneration<usize>>;
 /// An arena which can only hold up to \(2^{32} - 1\) elements and generations
 pub type SmallArena<T> = Arena<T, u32, NonzeroGeneration<u32>>;
 /// A typed index into a `StandardArena`
