@@ -1,3 +1,10 @@
+# 0.2.2
+
+Released 2019-06-27
+
+* Allowed `Arena`s with fixed generations (implementing a new trait `FixedGenerationalIndex`) to be used normally as long as no elements are removed.
+* Added `Slab`, `SlabIndex` and related typedefs to use new `DisableRemoval` indices to treat an `Arena` as a `Slab`
+
 # 0.2.1
 
 Released 2019-06-26
@@ -5,7 +12,7 @@ Released 2019-06-26
 * Changed `StandardArena`, `SmallArena` and `TinyArena` typedefs to use new `NonzeroGeneration` generation indices for `Option<Index>` size optimization
 * Changed `TinyWrapArena` typedefs to use new `NonzeroWrapGeneration` indices for `Option<Index>` size optimization
 * Added `U64Arena` to replace the old `StandardArena` and `PicoArena` for a `NanoArena`-like type with `NonzeroWrapGeneration`
-* Added typedefs `U64Index`, `StandardIndex`, `SmallIndex`, `TinyIndex`, `NanoIndex` and `PicoIndex` for indices into the corresponding `Arena`s 
+* Added typedefs `U64Index`, `StandardIndex`, `SmallIndex`, `TinyIndex`, `NanoIndex` and `PicoIndex` for indices into the corresponding `Arena`s
 
 # 0.2.0
 
