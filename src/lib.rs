@@ -287,11 +287,14 @@ impl<T: Eq + One + AddAssign + Default + PartialOrd + Copy> GenerationalIndex fo
 pub struct IgnoreGeneration;
 
 impl FixedGenerationalIndex for IgnoreGeneration {
+    #[inline(always)]
     fn first_generation() -> Self { IgnoreGeneration }
+    #[inline(always)]
     fn generation_lt(&self, _other : &Self) -> bool { false }
 }
 
 impl GenerationalIndex for IgnoreGeneration {
+    #[inline(always)]
     fn increment_generation(&mut self) {}
 }
 
@@ -302,7 +305,9 @@ impl GenerationalIndex for IgnoreGeneration {
 pub struct DisableRemoval;
 
 impl FixedGenerationalIndex for DisableRemoval {
+    #[inline(always)]
     fn first_generation() -> Self { DisableRemoval }
+    #[inline(always)]
     fn generation_lt(&self, _other : &Self) -> bool { false }
 }
 
