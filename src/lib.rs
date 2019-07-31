@@ -298,6 +298,10 @@ impl GenerationalIndex for IgnoreGeneration {
     fn increment_generation(&mut self) {}
 }
 
+/// A marker trait which says that a generation type is ignored
+pub trait IgnoredGeneration: FixedGenerationalIndex {}
+impl IgnoredGeneration for IgnoreGeneration {}
+
 /// If this is used as a generational index, then the arena is no longer generational
 /// and does not allow element removal
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -310,6 +314,8 @@ impl FixedGenerationalIndex for DisableRemoval {
     #[inline(always)]
     fn generation_lt(&self, _other : &Self) -> bool { false }
 }
+
+impl IgnoredGeneration for DisableRemoval {}
 
 /// A type which can be used as an index to an arena
 pub trait ArenaIndex: Copy {
@@ -395,6 +401,20 @@ pub struct Index<T, I: ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
     #[derivative(PartialEq(bound=""))]
     #[derivative(Hash(bound=""))]
     _phantom: core::marker::PhantomData<fn() -> T>
+}
+
+impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex> Index<T, I, G> {
+    /// Get this index as a `usize`
+    pub fn to_idx(&self) -> usize { self.index.to_idx() }
+}
+
+impl<T, I: ArenaIndex + Copy, G: IgnoredGeneration> Index<T, I, G> {
+    /// Convert a `usize` to an index, asserting it is valid (i.e. has not been removed)
+    pub fn from_idx(n: usize) -> Self { Index {
+        index: I::from_idx(n),
+        generation: G::first_generation(),
+        _phantom : core::marker::PhantomData
+    } }
 }
 
 impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex + Copy> Copy for Index<T, I, G> {}

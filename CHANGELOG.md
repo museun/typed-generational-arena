@@ -1,3 +1,11 @@
+# 0.2.3
+
+Released 2019-07-31
+
+* Added `to_idx` method to `Index` to allow getting the underlying `usize` of an `Index`
+* Added `IgnoredGeneration` marker trait to denote generation indices which are ignored
+* Added `from_idx` method to `Index` where generations are ignored to allow turning a `usize` into an `Index`
+
 # 0.2.2
 
 Released 2019-06-27
