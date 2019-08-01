@@ -358,7 +358,7 @@ impl<T> ArenaIndex for NonZeroIndex<T> where
 ///
 /// [See the module-level documentation for example usage and motivation.](./index.html)
 #[derive(Clone, Debug)]
-pub struct Arena<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = usize> {
+pub struct Arena<T, I = usize, G = usize> {
     // It is a breaking change to modify these three members, as they are needed for serialization
     items: Vec<Entry<T, I, G>>,
     generation: G,
@@ -367,7 +367,7 @@ pub struct Arena<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = usize> {
 }
 
 #[derive(Clone, Debug)]
-enum Entry<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
+enum Entry<T, I = usize, G = u64> {
     Free { next_free: Option<I> },
     Occupied { generation: G, value: T },
 }
@@ -389,7 +389,7 @@ enum Entry<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Derivative)]
 #[derivative(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Index<T, I: ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
+pub struct Index<T, I = usize, G = u64> {
     /// The array index of the given value
     index: I,
     /// The generation of the given value
@@ -404,9 +404,13 @@ pub struct Index<T, I: ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
     _phantom: core::marker::PhantomData<fn() -> T>
 }
 
-impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex> Index<T, I, G> {
+impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex + Copy> Index<T, I, G> {
     /// Get this index as a `usize`
     pub fn to_idx(&self) -> usize { self.index.to_idx() }
+    /// Get this index's array index into the arena
+    pub fn arr_idx(&self) -> I { self.index }
+    /// Get this index's generation
+    pub fn gen(&self) -> G { self.generation }
 }
 
 impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex> Index<T, I, G> {
@@ -429,7 +433,7 @@ impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex + Copy> Copy for Index<T
 impl<T, I: ArenaIndex, G: FixedGenerationalIndex> Index<T, I, G> {
     /// Create a new index from a given array index and generation
     #[inline]
-    fn new(index : I, generation : G) -> Index<T, I, G> {
+    pub fn new(index : I, generation : G) -> Index<T, I, G> {
         Index{ index : index, generation : generation, _phantom : std::marker::PhantomData }
     }
 }

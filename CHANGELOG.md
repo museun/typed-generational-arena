@@ -1,3 +1,12 @@
+# 0.2.4
+
+Released 2019-08-01
+
+* Added `from_idx_first_gen` method which works even when generations are ignored
+* Made `new` public
+* Added getters for the current index and generation
+* Removed bounds from `Array`, `Index` and `Entry` structs
+
 # 0.2.3
 
 Released 2019-07-31
