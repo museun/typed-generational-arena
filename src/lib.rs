@@ -390,8 +390,9 @@ enum Entry<T, I : ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
 #[derive(Derivative)]
 #[derivative(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Index<T, I: ArenaIndex = usize, G: FixedGenerationalIndex = u64> {
-
+    /// The array index of the given value
     index: I,
+    /// The generation of the given value
     generation: G,
     #[cfg_attr(feature = "serde", serde(skip))]
     #[derivative(Debug(bound=""))]
@@ -408,20 +409,27 @@ impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex> Index<T, I, G> {
     pub fn to_idx(&self) -> usize { self.index.to_idx() }
 }
 
-impl<T, I: ArenaIndex + Copy, G: IgnoredGeneration> Index<T, I, G> {
-    /// Convert a `usize` to an index, asserting it is valid (i.e. has not been removed)
-    pub fn from_idx(n: usize) -> Self { Index {
+impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex> Index<T, I, G> {
+    /// Convert a `usize` to an index at the first generation
+    #[inline]
+    pub fn from_idx_first_gen(n: usize) -> Self { Index {
         index: I::from_idx(n),
         generation: G::first_generation(),
         _phantom : core::marker::PhantomData
     } }
 }
 
+impl<T, I: ArenaIndex + Copy, G: IgnoredGeneration> Index<T, I, G> {
+    /// Convert a `usize` to an index (with generations ignored)
+    #[inline(always)] pub fn from_idx(n: usize) -> Self { Self::from_idx_first_gen(n) }
+}
+
 impl<T, I: ArenaIndex + Copy, G: FixedGenerationalIndex + Copy> Copy for Index<T, I, G> {}
 
 impl<T, I: ArenaIndex, G: FixedGenerationalIndex> Index<T, I, G> {
+    /// Create a new index from a given array index and generation
     #[inline]
-    pub(self) fn new(index : I, generation : G) -> Index<T, I, G> {
+    fn new(index : I, generation : G) -> Index<T, I, G> {
         Index{ index : index, generation : generation, _phantom : std::marker::PhantomData }
     }
 }
