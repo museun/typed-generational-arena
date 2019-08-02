@@ -1,3 +1,9 @@
+# 0.2.5
+
+Released 2019-08-02
+
+* Made `IgnoreGeneration`, `NonzeroIndex` and `DisableRemoval` derive `Hash`, `Ord` and `PartialOrd`
+
 # 0.2.4
 
 Released 2019-08-01
