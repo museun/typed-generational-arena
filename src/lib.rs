@@ -414,6 +414,20 @@ pub struct Arena<T, I = usize, G = usize> {
     free_list_head: Option<I>,
 }
 
+impl<T, I, G> Default for Arena<T, I, G>
+where
+    G: Default,
+{
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            generation: G::default(),
+            len: 0,
+            free_list_head: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Entry<T, I = usize, G = u64> {
     Free { next_free: Option<I> },
