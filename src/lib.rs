@@ -205,6 +205,18 @@ pub struct NonzeroGeneration<T: NonZeroAble> {
     gen: T::NonZero,
 }
 
+impl<T> Default for NonzeroGeneration<T>
+where
+    T: NonZeroAble,
+    <T as NonZeroAble>::NonZero: Default,
+{
+    fn default() -> Self {
+        Self {
+            gen: <<T as NonZeroAble>::NonZero>::default(),
+        }
+    }
+}
+
 impl<T> FixedGenerationalIndex for NonzeroGeneration<T>
 where
     T: NonZeroAble
