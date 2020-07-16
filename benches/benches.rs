@@ -4,11 +4,11 @@ extern crate typed_generational_arena;
 
 use criterion::{Criterion, ParameterizedBenchmark, Throughput};
 use typed_generational_arena::{
-    StandardArena as Arena, StandardIndex as Index, SmallArena, SmallIndex
+    PtrSlab, PtrSlabIndex, SmallPtrSlab, SmallPtrSlabIndex, SmallSlab, SmallSlabIndex,
+    StandardSlab as Slab, StandardSlabIndex as SlabIndex,
 };
 use typed_generational_arena::{
-    StandardSlab as Slab, StandardSlabIndex as SlabIndex,
-    PtrSlab, PtrSlabIndex, SmallSlab, SmallSlabIndex, SmallPtrSlab, SmallPtrSlabIndex
+    SmallArena, SmallIndex, StandardArena as Arena, StandardIndex as Index,
 };
 
 #[derive(Default)]
@@ -136,7 +136,6 @@ fn u32_ptr_slab_collect<T>(slab: &SmallPtrSlab<T>, n: usize) {
         criterion::black_box(slab.iter().collect::<Vec<_>>());
     }
 }
-
 
 fn criterion_benchmark(c: &mut Criterion) {
     c.bench(
@@ -654,7 +653,6 @@ fn criterion_benchmark(c: &mut Criterion) {
         )
         .throughput(|n| Throughput::Elements(*n as u32)),
     );
-
 }
 
 criterion_group!(benches, criterion_benchmark);
