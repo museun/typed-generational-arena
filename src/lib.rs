@@ -205,14 +205,10 @@ pub struct NonzeroGeneration<T: NonZeroAble> {
     gen: T::NonZero,
 }
 
-impl<T> Default for NonzeroGeneration<T>
-where
-    T: NonZeroAble,
-    <T as NonZeroAble>::NonZero: Default,
-{
+impl Default for NonzeroGeneration<usize> {
     fn default() -> Self {
         Self {
-            gen: <<T as NonZeroAble>::NonZero>::default(),
+            gen: std::num::NonZeroUsize::new(1).expect("1 > 0"),
         }
     }
 }
